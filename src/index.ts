@@ -83,6 +83,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
   public static version = 2
 
   protected _dataHandler?: DataHandler
+  protected _moneyHandler?: MoneyHandler
   private _readyState: ReadyState = ReadyState.INITIAL
   protected _log: any
 
@@ -228,6 +229,25 @@ export default class MojaHttpPlugin extends EventEmitter2 {
   async sendData (buffer: Buffer): Promise<Buffer> {
     const response = await this._call(deserializeIlpPrepare(buffer))
     return serializeIlpReply(response)
+  }
+
+  registerMoneyHandler (handler: MoneyHandler) {
+    if (this._moneyHandler) {
+      throw new Error('requestHandler is already registered')
+    }
+
+    // TODO Is this check required? TypeScript's linter suggests not
+    // tslint:disable-next-line:strict-type-predicates
+    if (typeof handler !== 'function') {
+      throw new Error('requestHandler must be a function')
+    }
+
+    this._log.trace('registering money handler')
+    this._moneyHandler = handler
+  }
+
+  deregisterMoneyHandler () {
+    this._moneyHandler = undefined
   }
 
   /**
