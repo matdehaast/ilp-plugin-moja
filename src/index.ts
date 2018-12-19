@@ -1,13 +1,18 @@
-import * as assert from 'assert'
 import * as crypto from 'crypto'
 import * as Debug from 'debug'
 import * as Http from 'http'
 import { EventEmitter2, Listener } from 'eventemitter2'
 import { URL } from 'url'
-import * as express from "express";
-import * as http from "http";
-
-// import { protocolDataToIlpAndCustom, ilpAndCustomToProtocolData } from './protocol-data-converter'
+import * as express from 'express'
+import * as bodyParser from 'body-parser'
+import * as axios from 'axios'
+import {
+  isFulfill,
+  IlpPrepare,
+  serializeIlpPrepare,
+  IlpReply,
+  deserializeIlpPrepare, serializeIlpReply, IlpFulfill, deserializeIlpReply
+} from 'ilp-packet'
 
 const BtpPacket = require('btp-packet')
 
@@ -38,69 +43,10 @@ const namesToCodes = {
   'InsufficientBalanceError': 'F08'
 }
 
-/**
- * Returns BTP error code as defined by the BTP ASN.1 spec.
- */
-function jsErrorToBtpError (e: Error) {
-  const name: string = e.name || 'NotAcceptedError'
-  const code: string = namesToCodes[name] || 'F00'
-
-  return {
-    code,
-    name,
-    triggeredAt: new Date(),
-    data: JSON.stringify({ message: e.message })
-  }
-}
-
 const ILP_PACKET_TYPES = {
   12: 'ilp-prepare',
   13: 'ilp-fulfill',
   14: 'ilp-reject'
-}
-
-/**
- * Converts BTP sub protocol data from json/plain text/octet stream to string.
- */
-function subProtocolToString (data: BtpSubProtocol): string {
-  let stringData
-
-  switch (data.contentType) {
-    case BtpPacket.MIME_APPLICATION_OCTET_STREAM:
-      stringData = data.data.toString('base64')
-      break
-    case BtpPacket.MIME_APPLICATION_JSON:
-    case BtpPacket.MIME_TEXT_PLAIN_UTF8:
-      stringData = data.data.toString('utf8')
-      break
-  }
-
-  return `${data.protocolName}=${stringData}`
-}
-
-/**
- * Goes through all the sub protocols in the packet data of a BTP packet and
- * returns a protocol map of each sub protocol with the key as the protocol
- * name and value as a string-form protocol object. Calls
- * `subProtocolToString(data)` to convert the value to a string.
- */
-function generatePacketDataTracer (packetData: BtpPacketData) {
-  return {
-    toString: () => {
-      try {
-        return packetData.protocolData.map(data => {
-          switch (data.protocolName) {
-            case 'ilp':
-              return ILP_PACKET_TYPES[data.data[0]] || ('ilp-' + data.data[0])
-            default:
-              return subProtocolToString(data)
-          }
-        }).join(';')
-      } catch (err) {
-        return 'serialization error. err=' + err.stack
-      }
-    }
-  }
 }
 
 enum MessageType {
@@ -108,49 +54,28 @@ enum MessageType {
   transferPut
 }
 
-export interface BtpPacket {
-  requestId: number
-  type: number
-  data: BtpPacketData
-}
-
-export interface BtpPacketData {
-  protocolData: Array<BtpSubProtocol>
-  amount?: string
-  code?: string
-  name?: string
-  triggeredAt?: Date
-  data?: string
-}
-
-export interface BtpSubProtocol {
-  protocolName: string
-  contentType: number
-  data: Buffer
-}
-
 /**
  * Constructor options for a BTP plugin. The 'Instance Management' section of
  * the RFC-24 indicates that every ledger plugin accepts an opts object, and
  * an optional api denoted as 'PluginServices.' This is the opts object.
  */
-export interface IlpPluginBtpConstructorOptions {
-  listener?: {
+export interface IlpPluginHttpConstructorOptions {
+  listener: {
     port: number,
-    secret: string
-  },
-  endpoint?: {
-    address: string
+    baseAddress: string,
+    host: string
+  }
+  server: {
+    endpoint: string
   }
 }
-
 
 /**
  * This is the optional api, or 'PluginServices' interface, that is passed
  * into the ledger plugin constructor as defined in RFC-24. In this case
- * the api exposes 3 modules.
+ * the api exposes 1 module.
  */
-export interface IlpPluginBtpConstructorModules {
+export interface IlpPluginHttpConstructorModules {
   log?: any
 }
 
@@ -158,32 +83,33 @@ export default class MojaHttpPlugin extends EventEmitter2 {
   public static version = 2
 
   protected _dataHandler?: DataHandler
-  protected _moneyHandler?: MoneyHandler
   private _readyState: ReadyState = ReadyState.INITIAL
   protected _log: any
 
   private app: express.Application
-  private server: http.Server
+  private server: Http.Server
+  private host: string
+  private port: number
+  private baseAddress: string
+  private endpoint: string
+  private client: any
 
-  private endpoint: string | null
-
-
-  constructor (options: IlpPluginBtpConstructorOptions, modules?: IlpPluginBtpConstructorModules) {
+  constructor (options: IlpPluginHttpConstructorOptions, modules?: IlpPluginHttpConstructorModules) {
     super()
 
     modules = modules || {}
     this._log = modules.log || debug
     this._log.trace = this._log.trace || Debug(this._log.debug.namespace + ':trace')
     this.app = express()
+    this.app.use(bodyParser.urlencoded({ extended: true }))
+    this.app.use(bodyParser.json())
 
-    this.endpoint = options.endpoint ? options.endpoint.address : null
+    this.port = options.listener ? options.listener.port : 1080
+    this.host = options.listener ? options.listener.host : 'localhost'
+    this.baseAddress = options.listener ? options.listener.baseAddress : ''
+    this.endpoint = options.server.endpoint
+    this.client = axios
   }
-
-  // Required for different _connect signature in mini-accounts and its subclasses
-  /* tslint:disable-next-line:no-empty */
-  protected async _connect (...opts: any[]): Promise<void> {}
-  /* tslint:disable-next-line:no-empty */
-  protected async _disconnect (): Promise<void> {}
 
   async connect () {
     if (this._readyState > ReadyState.INITIAL) {
@@ -199,21 +125,17 @@ export default class MojaHttpPlugin extends EventEmitter2 {
      * 3. Parties
      * 4. Health
      */
-    this.app.get('/', (request: any, response: any) => {
+    this.app.get(this.baseAddress + '/', (request: any, response: any) => {
       response.send('Hello from Moja CNP!')
     })
 
-    this.app.post('/transfers', (request: any, response: any) => {
-      response.status(202).end()
-    })
+    this.app.post(this.baseAddress + '/transfers', this._handleTransferPostRequest.bind(this))
 
-    // this.server = Http.createServer(this._handleIncomingHttpRequest)
-    this.server = this.app.listen(3020, '0.0.0.0')
+    this.app.put(this.baseAddress + '/transfers/:transferId', this._handleTransferPutRequest.bind(this))
+
+    this.server = this.app.listen(this.port, this.host)
 
     this._log.info(`listening for requests connections on ${this.server.address()}`)
-
-    /* To be overriden. */
-    await this._connect()
 
     this._readyState = ReadyState.READY_TO_EMIT
     this._emitConnect()
@@ -229,9 +151,6 @@ export default class MojaHttpPlugin extends EventEmitter2 {
   async disconnect () {
     this._emitDisconnect()
 
-    /* To be overriden. */
-    await this._disconnect()
-
     if (this.server) {
       this.server.close()
     }
@@ -241,67 +160,75 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     return this._readyState === ReadyState.CONNECTED
   }
 
-
   /**
-   * Deserialize incoming websocket message and call `handleIncomingBtpPacket`.
-   * If error in handling btp packet, call `handleOutgoingBtpPacket` and send
-   * the error through the socket.
+   * Convert incoming http request into ilpPacket then forward onto connector.
+   * Return a 200 to sender if packet was successgully forwarded, 422 if not.
    */
-  async _handleIncomingHttpRequest (req: Http.IncomingMessage, response: Http.ServerResponse) {
-    console.log(req)
-    // let btpPacket: BtpPacket
-    // try {
-    //   btpPacket = BtpPacket.deserialize(binaryMessage)
-    // } catch (err) {
-    //   this._log.error('deserialization error:', err)
-    //   ws.close()
-    //   return
-    // }
-    //
-    // try {
-    //   await this._handleIncomingBtpPacket('', btpPacket)
-    // } catch (err) {
-    //   this._log.debug(`Error processing BTP packet of type ${btpPacket.type}: `, err)
-    //   const error = jsErrorToBtpError(err)
-    //   const requestId = btpPacket.requestId
-    //   const { code, name, triggeredAt, data } = error
-    //
-    //   await this._handleOutgoingBtpPacket('', {
-    //     type: BtpPacket.TYPE_ERROR,
-    //     requestId,
-    //     data: {
-    //       code,
-    //       name,
-    //       triggeredAt,
-    //       data,
-    //       protocolData: []
-    //     }
-    //   })
-    // }
+  async _handleTransferPostRequest (request: express.Request, response: express.Response) {
+    try {
+      const { amount, expiration, condition, transferId } = request.body
+      const ilpPrepare = {
+        amount: amount.amount,
+        expiresAt: new Date(expiration),
+        destination: request.headers['fspiop-final-destination'] ? request.headers['fspiop-final-destination'] : request.headers['fspiop-destination'],
+        data: Buffer.from(JSON.stringify(request.body)),
+        executionCondition: Buffer.from(condition, 'base64')
+      } as IlpPrepare
+      response.status(202).end()
+
+      if (!this._dataHandler) {
+        this._log.error('No data handler defined.')
+        throw new Error('No data handler is defined.')
+      }
+
+      try {
+        const packet = await this._dataHandler(serializeIlpPrepare(ilpPrepare))
+        const ilpReply = deserializeIlpReply(packet)
+        const transferReply = JSON.parse(ilpReply.data.toString())
+
+        this.client.put(this.endpoint + '/transfers/' + transferId, transferReply, { headers: transferReply.headers })
+      } catch (err) {
+        // TODO: check mojaloop api spec to see which endpoint rejects go to
+        const packet = err
+      }
+
+    } catch (err) {
+      response.status(422).end()
+    }
   }
 
   /**
-   * Send Btp data to counterparty. Uses `_call` which sets the proper timer for
-   * expiry on response packets.
+   * Called after receiving a transfer put request. Emits event to resolve listener from _call. The headers received are encoded
+   * into the data section of the ilpFulfill
    */
-  // async sendData (buffer: Buffer): Promise<Buffer> {
-  //   const response = await this._call('', {
-  //     type: BtpPacket.TYPE_MESSAGE,
-  //     requestId: await _requestId(),
-  //     data: { protocolData: [{
-  //         protocolName: 'ilp',
-  //         contentType: BtpPacket.MIME_APPLICATION_OCTET_STREAM,
-  //         data: buffer
-  //       }] }
-  //   })
-  //
-  //   const ilpResponse = response.protocolData
-  //     .filter(p => p.protocolName === 'ilp')[0]
-  //
-  //   return ilpResponse
-  //     ? ilpResponse.data
-  //     : Buffer.alloc(0)
-  // }
+  async _handleTransferPutRequest (request: express.Request, response: express.Response) {
+
+    const transferId = request.params.transferId
+    this._log.info(`received fulfill transfer request. transferId=${transferId}, headers=${request.headers}, message=${request.body}`)
+
+    let payload = request.body
+    payload.headers = {
+      'content-type': 'application/vnd.interoperability.transfers+json;version=1',
+      'fspiop-final-destination': request.headers['fspiop-final-destination'],
+      'fspiop-source': request.headers['fspiop-source']
+    }
+
+    const ilpFulfill = {
+      fulfillment: Buffer.from(payload.fulfillment),
+      data: Buffer.from(JSON.stringify(payload))
+    } as IlpFulfill
+
+    this.emit('__callback_' + transferId, ilpFulfill)
+    response.status(202).end()
+  }
+
+  /**
+   * Send Btp data to counterparty. Uses `_call` which sets the listener for response packets received via /transfer/{transfer_id}
+   */
+  async sendData (buffer: Buffer): Promise<Buffer> {
+    const response = await this._call(deserializeIlpPrepare(buffer))
+    return serializeIlpReply(response)
+  }
 
   /**
    * With no underlying ledger, sendMoney is a no-op.
@@ -343,172 +270,45 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     this._dataHandler = undefined
   }
 
-  registerMoneyHandler (handler: MoneyHandler) {
-    if (this._moneyHandler) {
-      throw new Error('requestHandler is already registered')
-    }
-
-    // TODO Is this check required? TypeScript's linter suggests not
-    // tslint:disable-next-line:strict-type-predicates
-    if (typeof handler !== 'function') {
-      throw new Error('requestHandler must be a function')
-    }
-
-    this._log.trace('registering money handler')
-    this._moneyHandler = handler
-  }
-
-  deregisterMoneyHandler () {
-    this._moneyHandler = undefined
-  }
-
-  // protocolDataToIlpAndCustom (packet: BtpPacketData) {
-  //   return protocolDataToIlpAndCustom(packet)
-  // }
-  //
-  // /**
-  //  * Converts protocol map to Btp packet. Reference in
-  //  * procotol-data-converter.ts.
-  //  */
-  // ilpAndCustomToProtocolData (obj: { ilp?: Buffer, custom?: Object , protocolMap?: Map<string, Buffer | string | Object> }) {
-  //   return ilpAndCustomToProtocolData(obj)
-  // }
-
   /**
-   * Function to send Btp requests with proper timeout for response or error.
-   *
-   * Create a listener for for an incoming Btp response/error. Resolves on
-   * btp response, rejects on btp error. Send an outgoing btp packet (request),
-   * and set a timer. If the timer expires before a response/error is received, time
-   * out. If a response/error is received, `_handleIncomingBtpPacket` emits
-   * `__callback__`, which triggers the aforementioned listener.
+   * Create a listener for a put /transfer/{transfer_id} request. Listener create Send IlpPacket
    */
-  protected async _call (to: string, btpPacket: BtpPacket): Promise<BtpPacketData> {
-    const requestId = btpPacket.requestId
+  protected async _call (packet: IlpPrepare): Promise<IlpReply> {
+    const requestId = JSON.parse(packet.data.toString()).transferId
 
     let callback: Listener
-    let timer: NodeJS.Timer
-    const response = new Promise<BtpPacketData>((resolve, reject) => {
-      callback = (type: number, data: BtpPacketData) => {
-        switch (type) {
-          case BtpPacket.TYPE_RESPONSE:
-            resolve(data)
-            clearTimeout(timer)
-            break
-
-          case BtpPacket.TYPE_ERROR:
-            reject(new Error(JSON.stringify(data)))
-            clearTimeout(timer)
-            break
-
-          default:
-            throw new Error('Unknown BTP packet type: ' + type)
-        }
-      }
+    const response = new Promise<IlpReply>((resolve, reject) => {
+      callback = (packet: IlpReply) => isFulfill(packet) ? resolve(packet) : reject(packet)
       this.once('__callback_' + requestId, callback)
     })
 
-    await this._handleOutgoingBtpPacket(to, btpPacket)
-
-    // const timeout = new Promise<BtpPacketData>((resolve, reject) => {
-    //   timer = setTimeout(() => {
-    //     this.removeListener('__callback_' + requestId, callback)
-    //     reject(new Error(requestId + ' timed out'))
-    //   }, this._responseTimeout)
-    // })
-
-    return Promise.race([
-      response,
-      // timeout
-    ])
+    await this._postIlpPrepare(packet)
+    return response
   }
 
   /**
-   * If a response or error packet is received, trigger the callback function
-   * defined in _call (i.e. response/error returned before timing out)
-   * function. Throw error on PREPARE, FULFILL or REJECT packets, because they
-   * are not BTP packets. If TRANSFER or MESSAGE packets are received, invoke
-   * money handler or data handler respectively. Otherwise prepare a response and handle the outgoing BTP
-   * packet. The reason this function does not handle sending back an ERROR
-   * packet in the websocket is because that is defined in the
-   * _handleIncomingWsMessage function.
+   * Converts given IlpPrepare packet into Moja packet and posts it to the given endpoint.
    */
-  protected async _handleIncomingBtpPacket (from: string, btpPacket: BtpPacket) {
-    const { type, requestId, data } = btpPacket
-    const typeString = BtpPacket.typeToString(type)
+  protected async _postIlpPrepare (packet: IlpPrepare, endpoint?: string, requestId?: string) {
 
-    this._log.trace(`received btp packet. type=${typeString} requestId=${requestId} info=${generatePacketDataTracer(data)}`)
-    let result: Array<BtpSubProtocol>
-    switch (type) {
-      case BtpPacket.TYPE_RESPONSE:
-      case BtpPacket.TYPE_ERROR:
-        this.emit('__callback_' + requestId, type, data)
-        return
-      case BtpPacket.TYPE_PREPARE:
-      case BtpPacket.TYPE_FULFILL:
-      case BtpPacket.TYPE_REJECT:
-        throw new Error('Unsupported BTP packet')
+    this._log.trace(`sending prepare packet over http. requestId=${requestId} packet=${JSON.stringify(packet)}`)
 
-      case BtpPacket.TYPE_TRANSFER:
-        result = await this._handleMoney(from, btpPacket)
-        break
+    try {
+      let transferRequest = JSON.parse(packet.data.toString())
+      transferRequest.payerFsp = 'moja.superremit'
+      // convert to moja packet
+      const headers = {
+        'fspiop-final-destination': packet.destination,
+        'fspiop-source': 'source', // TODO: store source info
+        'accept': 'application/vnd.interoperability.transfers+json;version=1',
+        'content-type': 'application/vnd.interoperability.transfers+json;version=1'
+      }
 
-      case BtpPacket.TYPE_MESSAGE:
-        // result = await this._handleData(from, btpPacket)
-        break
-
-      default:
-        throw new Error('Unknown BTP packet type')
+      this._log.info('posting to endpoint:', endpoint, 'headers', headers,'transfer request:', transferRequest)
+      this.client.post(this.endpoint + '/transfers', transferRequest, { headers })
+    } catch (e) {
+      this._log.error('unable to send http message to client: ' + e.message, 'packet:', JSON.stringify(packet))
     }
-
-    await this._handleOutgoingBtpPacket(from, {
-      type: BtpPacket.TYPE_RESPONSE,
-      requestId,
-      // data: { protocolData: result || [] }
-      data: { protocolData: [] }
-    })
-  }
-
-  /**
-   * Called after receiving btp packet of type message. First convert it to ILP
-   * format, then handle the ILP data with the regsistered data handler, and then convert it back to BTP
-   * structure and send a response. E.g. for prepare, fulfill, and reject packets.
-   */
-  // protected async _handleData (from: string, btpPacket: BtpPacket): Promise<Array<BtpSubProtocol>> {
-  //   const { data } = btpPacket
-  //   const { ilp } = data;//protocolDataToIlpAndCustom(data) /* Defined in protocol-data-converter.ts. */
-  //
-  //   if (!this._dataHandler) {
-  //     throw new Error('no request handler registered')
-  //   }
-  //
-  //   const response = await this._dataHandler(ilp)
-  //   // return ilpAndCustomToProtocolData({ ilp: response })
-  //   return response
-  // }
-
-  /**
-   * Need to fully define on you own.
-   */
-  protected async _handleMoney (from: string, btpPacket: BtpPacket): Promise<Array<BtpSubProtocol>> {
-    throw new Error('No sendMoney functionality is included in this module')
-  }
-
-  /**
-   * Send a BTP packet to a user and wait for the promise to resolve without
-   * error.
-   */
-  protected async _handleOutgoingBtpPacket (to: string, btpPacket: BtpPacket) {
-
-    // const { type, requestId, data } = btpPacket
-    // const typeString = BtpPacket.typeToString(type)
-    // this._log.trace(`sending btp packet. type=${typeString} requestId=${requestId} info=${generatePacketDataTracer(data)}`)
-    //
-    // try {
-    //   await new Promise((resolve) => ws!.send(BtpPacket.serialize(btpPacket), resolve))
-    // } catch (e) {
-    //   this._log.error('unable to send btp message to client: ' + e.message, 'btp packet:', JSON.stringify(btpPacket))
-    // }
   }
 
   /**
@@ -537,4 +337,3 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     }
   }
 }
-

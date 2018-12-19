@@ -4,6 +4,9 @@ node_modules/
 *.tgz
 # dotenv environment variables file
 .env
+# ide
+.idea
+.vscode
 
 /src/*.js
 /src/*.js.map
