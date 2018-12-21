@@ -2,7 +2,6 @@ import * as crypto from 'crypto'
 import * as Debug from 'debug'
 import * as Http from 'http'
 import { EventEmitter2, Listener } from 'eventemitter2'
-import { URL } from 'url'
 import * as express from 'express'
 import * as bodyParser from 'body-parser'
 import * as axios from 'axios'
@@ -13,9 +12,6 @@ import {
   IlpReply,
   deserializeIlpPrepare, serializeIlpReply, IlpFulfill, deserializeIlpReply
 } from 'ilp-packet'
-
-const BtpPacket = require('btp-packet')
-
 const debug = require('ilp-logger')('ilp-plugin-moja')
 
 type DataHandler = (data: Buffer) => Promise<Buffer>
@@ -103,7 +99,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     this._log.trace = this._log.trace || Debug(this._log.debug.namespace + ':trace')
     this.app = express()
     this.app.use(bodyParser.urlencoded({ extended: true }))
-    this.app.use(bodyParser.json())
+    this.app.use(bodyParser.json({ type: req => req.headers['content-type'] === 'application/json' || req.headers['content-type'] === 'application/vnd.interoperability.transfers+json;version=1.0' }))
 
     this.port = options.listener ? options.listener.port : 1080
     this.host = options.listener ? options.listener.host : 'localhost'
@@ -136,7 +132,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
 
     this.server = this.app.listen(this.port, this.host)
 
-    this._log.info(`listening for requests connections on ${this.server.address()}`)
+    this._log.info(`listening for requests connections on ${this.server.address()}. port=${this.port}, host=${this.host}`)
 
     this._readyState = ReadyState.READY_TO_EMIT
     this._emitConnect()
@@ -167,6 +163,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
    */
   async _handleTransferPostRequest (request: express.Request, response: express.Response) {
     try {
+      this._log.info(`received request transfer. headers=${JSON.stringify(request.headers)}, body=${JSON.stringify(request.body)},  amount=${request.body.amount}`)
       const { amount, expiration, condition, transferId } = request.body
       const ilpPrepare = {
         amount: amount.amount,
@@ -187,6 +184,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
         const ilpReply = deserializeIlpReply(packet)
         const transferReply = JSON.parse(ilpReply.data.toString())
 
+        this._log.info(`sending put request to ${this.endpoint} for transferId=${transferId}`)
         this.client.put(this.endpoint + '/transfers/' + transferId, transferReply, { headers: transferReply.headers })
       } catch (err) {
         // TODO: check mojaloop api spec to see which endpoint rejects go to
@@ -194,7 +192,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       }
 
     } catch (err) {
-      response.status(422).end()
+      response.status(422).end(err.message)
     }
   }
 
@@ -203,19 +201,18 @@ export default class MojaHttpPlugin extends EventEmitter2 {
    * into the data section of the ilpFulfill
    */
   async _handleTransferPutRequest (request: express.Request, response: express.Response) {
-
     const transferId = request.params.transferId
-    this._log.info(`received fulfill transfer request. transferId=${transferId}, headers=${request.headers}, message=${request.body}`)
+    this._log.info(`received fulfill transfer request. transferId=${transferId}`)
 
     let payload = request.body
     payload.headers = {
       'content-type': 'application/vnd.interoperability.transfers+json;version=1',
       'fspiop-final-destination': request.headers['fspiop-final-destination'],
-      'fspiop-source': request.headers['fspiop-source']
+      'fspiop-source': 'moja.superremit' // TODO: get address
     }
 
     const ilpFulfill = {
-      fulfillment: Buffer.from(payload.fulfillment),
+      fulfillment: Buffer.from(payload.fulfillment, 'base64'),
       data: Buffer.from(JSON.stringify(payload))
     } as IlpFulfill
 
@@ -224,7 +221,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
   }
 
   /**
-   * Send Btp data to counterparty. Uses `_call` which sets the listener for response packets received via /transfer/{transfer_id}
+   * Send data to counterparty. Uses `_call` which sets the listener for response packets received via /transfer/{transfer_id}
    */
   async sendData (buffer: Buffer): Promise<Buffer> {
     const response = await this._call(deserializeIlpPrepare(buffer))
@@ -294,6 +291,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
    * Create a listener for a put /transfer/{transfer_id} request. Listener create Send IlpPacket
    */
   protected async _call (packet: IlpPrepare): Promise<IlpReply> {
+    // TODO not general to all ilpPrepares. e.g. route control.
     const requestId = JSON.parse(packet.data.toString()).transferId
 
     let callback: Listener
@@ -309,23 +307,24 @@ export default class MojaHttpPlugin extends EventEmitter2 {
   /**
    * Converts given IlpPrepare packet into Moja packet and posts it to the given endpoint.
    */
-  protected async _postIlpPrepare (packet: IlpPrepare, endpoint?: string, requestId?: string) {
+  protected async _postIlpPrepare (packet: IlpPrepare, requestId?: string) {
 
-    this._log.trace(`sending prepare packet over http. requestId=${requestId} packet=${JSON.stringify(packet)}`)
+    this._log.trace(`posting transfer prepare request to ${this.endpoint}. requestId=${requestId} packet=${JSON.stringify(packet)}`)
 
     try {
       let transferRequest = JSON.parse(packet.data.toString())
-      transferRequest.payerFsp = 'moja.superremit'
-      // convert to moja packet
+      transferRequest.payerFsp = 'moja.superremit' // TODO: need to know address of connector
+      transferRequest.payeeFsp = packet.destination
       const headers = {
         'fspiop-final-destination': packet.destination,
-        'fspiop-source': 'source', // TODO: store source info
+        'fspiop-source': 'moja.superremit', // TODO: get address
         'accept': 'application/vnd.interoperability.transfers+json;version=1',
-        'content-type': 'application/vnd.interoperability.transfers+json;version=1'
+        'content-type': 'application/vnd.interoperability.transfers+json;version=1',
+        'date': (new Date()).toUTCString()
       }
 
-      this._log.info('posting to endpoint:', endpoint, 'headers', headers,'transfer request:', transferRequest)
-      this.client.post(this.endpoint + '/transfers', transferRequest, { headers })
+      this._log.info('posting to endpoint:', this.endpoint, 'headers', headers,'transfer request:', transferRequest)
+      this.client.post(this.endpoint + '/transfers', transferRequest, { headers }).catch((err: any) => console.log(err))
     } catch (e) {
       this._log.error('unable to send http message to client: ' + e.message, 'packet:', JSON.stringify(packet))
     }
@@ -356,4 +355,16 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       this.emit('connect')
     }
   }
+}
+
+/**
+ * Generate a new request id.
+ */
+function _requestId (): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    crypto.randomBytes(4, (err, buf) => {
+      if (err) return reject(err)
+      resolve(buf.readUInt32BE(0))
+    })
+  })
 }
