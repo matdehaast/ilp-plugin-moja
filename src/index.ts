@@ -45,9 +45,9 @@ const ILP_PACKET_TYPES = {
   14: 'ilp-reject'
 }
 
-enum MessageType {
-  transferPost,
-  transferPut
+export enum MessageType {
+  transfer,
+  quote
 }
 
 /**
@@ -126,9 +126,12 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       response.send('Hello from Moja CNP!')
     })
 
+    //Transfers
     this.app.post(this.baseAddress + '/transfers', this._handleTransferPostRequest.bind(this))
-
     this.app.put(this.baseAddress + '/transfers/:transferId', this._handleTransferPutRequest.bind(this))
+
+    //Quotes
+    this.app.post(this.baseAddress + '/quotes', this._handleQuotePostRequest.bind(this))
 
     this.server = this.app.listen(this.port, this.host)
 
@@ -159,17 +162,25 @@ export default class MojaHttpPlugin extends EventEmitter2 {
 
   /**
    * Convert incoming http request into ilpPacket then forward onto connector.
-   * Return a 200 to sender if packet was successgully forwarded, 422 if not.
+   * Return a 202 to sender if packet was successfully forwarded, 422 if not.
    */
   async _handleTransferPostRequest (request: express.Request, response: express.Response) {
     try {
       this._log.info(`received request transfer. headers=${JSON.stringify(request.headers)}, body=${JSON.stringify(request.body)},  amount=${request.body.amount}`)
       const { amount, expiration, condition, transferId } = request.body
+
+      const ilpMojaData = {
+        requestType: MessageType,
+        uniqueId: transferId,
+        requestBody: request.body,
+        requestHeaders: request.headers
+      }
+
       const ilpPrepare = {
         amount: amount.amount,
         expiresAt: new Date(expiration),
         destination: request.headers['fspiop-final-destination'] ? request.headers['fspiop-final-destination'] : request.headers['fspiop-destination'],
-        data: Buffer.from(JSON.stringify(request.body)),
+        data: Buffer.from(JSON.stringify(ilpMojaData)),
         executionCondition: Buffer.from(condition, 'base64')
       } as IlpPrepare
       response.status(202).end()
@@ -185,7 +196,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
         const transferReply = JSON.parse(ilpReply.data.toString())
 
         this._log.info(`sending put request to ${this.endpoint} for transferId=${transferId}`)
-        this.client.put(this.endpoint + '/transfers/' + transferId, transferReply, { headers: transferReply.headers })
+        this.client.put(this.endpoint + '/transfers/' + transferId, transferReply.requestBody, { headers: transferReply.requestHeaders })
       } catch (err) {
         // TODO: check mojaloop api spec to see which endpoint rejects go to
         const packet = err
@@ -204,20 +215,67 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     const transferId = request.params.transferId
     this._log.info(`received fulfill transfer request. transferId=${transferId}`)
 
-    let payload = request.body
-    payload.headers = {
-      'content-type': 'application/vnd.interoperability.transfers+json;version=1',
-      'fspiop-final-destination': request.headers['fspiop-final-destination'],
-      'fspiop-source': 'moja.superremit' // TODO: get address
+    const ilpMojaData = {
+      requestType: MessageType.transfer,
+      uniqueId: transferId,
+      requestBody: request.body,
+      requestHeaders: {
+        'content-type': 'application/vnd.interoperability.transfers+json;version=1',
+        'fspiop-final-destination': request.headers['fspiop-final-destination'],
+        'fspiop-source': 'moja.superremit' // TODO: get address
+      }
     }
 
     const ilpFulfill = {
-      fulfillment: Buffer.from(payload.fulfillment, 'base64'),
-      data: Buffer.from(JSON.stringify(payload))
+      fulfillment: Buffer.from(ilpMojaData.requestBody.fulfillment, 'base64'),
+      data: Buffer.from(JSON.stringify(ilpMojaData))
     } as IlpFulfill
 
     this.emit('__callback_' + transferId, ilpFulfill)
     response.status(202).end()
+  }
+
+  async _handleQuotePostRequest (request: express.Request, response: express.Response) {
+    try {
+      this._log.info(`received request quotes. headers=${JSON.stringify(request.headers)}, body=${JSON.stringify(request.body)}`)
+      const { amount, expiration, condition, quoteId } = request.body
+
+      const ilpMojaData = {
+        requestType: MessageType.quote,
+        uniqueId: quoteId,
+        requestBody: request.body,
+        requestHeaders: request.headers
+      }
+
+      const ilpPrepare = {
+        amount: amount.amount,
+        expiresAt: new Date(expiration),
+        destination: request.headers['fspiop-final-destination'] ? request.headers['fspiop-final-destination'] : request.headers['fspiop-destination'],
+        data: Buffer.from(JSON.stringify(ilpMojaData)),
+        executionCondition: Buffer.from('0', 'base64')
+      } as IlpPrepare
+      response.status(202).end()
+
+      if (!this._dataHandler) {
+        this._log.error('No data handler defined.')
+        throw new Error('No data handler is defined.')
+      }
+
+      try {
+        const packet = await this._dataHandler(serializeIlpPrepare(ilpPrepare))
+        const ilpReply = deserializeIlpReply(packet)
+        const transferReply = JSON.parse(ilpReply.data.toString())
+
+        this._log.info(`sending put request to ${this.endpoint} for transferId=${quoteId}`)
+        this.client.put(this.endpoint + '/quotes/' + quoteId, transferReply.requestBody, { headers: transferReply.requestHeaders })
+      } catch (err) {
+        // TODO: check mojaloop api spec to see which endpoint rejects go to
+        const packet = err
+      }
+
+    } catch (err) {
+      response.status(422).end(err.message)
+    }
   }
 
   /**
@@ -292,12 +350,12 @@ export default class MojaHttpPlugin extends EventEmitter2 {
    */
   protected async _call (packet: IlpPrepare): Promise<IlpReply> {
     // TODO not general to all ilpPrepares. e.g. route control.
-    const requestId = JSON.parse(packet.data.toString()).transferId
+    const uniqueId = JSON.parse(packet.data.toString()).uniqueId
 
     let callback: Listener
     const response = new Promise<IlpReply>((resolve, reject) => {
       callback = (packet: IlpReply) => isFulfill(packet) ? resolve(packet) : reject(packet)
-      this.once('__callback_' + requestId, callback)
+      this.once('__callback_' + uniqueId, callback)
     })
 
     await this._postIlpPrepare(packet)
@@ -311,20 +369,29 @@ export default class MojaHttpPlugin extends EventEmitter2 {
 
     this._log.trace(`posting transfer prepare request to ${this.endpoint}. requestId=${requestId} packet=${JSON.stringify(packet)}`)
 
+    //TODO needs to handle various request types
     try {
-      let transferRequest = JSON.parse(packet.data.toString())
-      transferRequest.payerFsp = 'moja.superremit' // TODO: need to know address of connector
-      transferRequest.payeeFsp = packet.destination
-      const headers = {
-        'fspiop-final-destination': packet.destination,
-        'fspiop-source': 'moja.superremit', // TODO: get address
-        'accept': 'application/vnd.interoperability.transfers+json;version=1',
-        'content-type': 'application/vnd.interoperability.transfers+json;version=1',
-        'date': (new Date()).toUTCString()
+      const packetData = JSON.parse(packet.data.toString())
+      let transferRequest = packetData.requestBody
+      switch(packetData.requestType) {
+        case(MessageType.transfer):
+          transferRequest.payerFsp = 'moja.superremit' // TODO: need to know address of connector
+          transferRequest.payeeFsp = packet.destination
+          const headers = {
+            'fspiop-final-destination': packet.destination,
+            'fspiop-source': 'moja.superremit', // TODO: get address
+            'accept': 'application/vnd.interoperability.transfers+json;version=1',
+            'content-type': 'application/vnd.interoperability.transfers+json;version=1',
+            'date': (new Date()).toUTCString()
+          }
+
+          this._log.info('posting to endpoint:', this.endpoint, 'headers', headers,'transfer request:', transferRequest)
+          this.client.post(this.endpoint + '/transfers', transferRequest, { headers }).catch((err: any) => console.log(err))
+          break;
+        default:
+          this._log.error('Unable to forward request for type ', packetData.requestType)
       }
 
-      this._log.info('posting to endpoint:', this.endpoint, 'headers', headers,'transfer request:', transferRequest)
-      this.client.post(this.endpoint + '/transfers', transferRequest, { headers }).catch((err: any) => console.log(err))
     } catch (e) {
       this._log.error('unable to send http message to client: ' + e.message, 'packet:', JSON.stringify(packet))
     }
