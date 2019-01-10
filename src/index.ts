@@ -17,6 +17,8 @@ const debug = require('ilp-logger')('ilp-plugin-moja')
 type DataHandler = (data: Buffer) => Promise<Buffer>
 type MoneyHandler = (amount: string) => Promise<void>
 
+const headerPattern = RegExp('^application\\/vnd.interoperability.(transfers|quotes|parties)\\+json;version=1.0')
+
 enum ReadyState {
   INITIAL = 0,
   CONNECTING = 1,
@@ -26,24 +28,6 @@ enum ReadyState {
 }
 
 const DEFAULT_TIMEOUT = 35000
-
-const namesToCodes = {
-  'UnreachableError': 'T00',
-  'NotAcceptedError': 'F00',
-  'InvalidFieldsError': 'F01',
-  'TransferNotFoundError': 'F03',
-  'InvalidFulfillmentError': 'F04',
-  'DuplicateIdError': 'F05',
-  'AlreadyRolledBackError': 'F06',
-  'AlreadyFulfilledError': 'F07',
-  'InsufficientBalanceError': 'F08'
-}
-
-const ILP_PACKET_TYPES = {
-  12: 'ilp-prepare',
-  13: 'ilp-fulfill',
-  14: 'ilp-reject'
-}
 
 export enum MessageType {
   transfer,
@@ -56,6 +40,7 @@ export enum MessageType {
  * an optional api denoted as 'PluginServices.' This is the opts object.
  */
 export interface IlpPluginHttpConstructorOptions {
+  ilpAddress: string,
   listener: {
     port: number,
     baseAddress: string,
@@ -78,6 +63,8 @@ export interface IlpPluginHttpConstructorModules {
 export default class MojaHttpPlugin extends EventEmitter2 {
   public static version = 2
 
+  private ilpAddress: string
+
   protected _dataHandler?: DataHandler
   protected _moneyHandler?: MoneyHandler
   private _readyState: ReadyState = ReadyState.INITIAL
@@ -99,8 +86,9 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     this._log.trace = this._log.trace || Debug(this._log.debug.namespace + ':trace')
     this.app = express()
     this.app.use(bodyParser.urlencoded({ extended: true }))
-    this.app.use(bodyParser.json({ type: req => req.headers['content-type'] === 'application/json' || req.headers['content-type'] === 'application/vnd.interoperability.transfers+json;version=1.0' }))
+    this.app.use(bodyParser.json({ type: req => req.headers['content-type'] === 'application/json' || headerPattern.test(req.headers['content-type'] as string) }))
 
+    this.ilpAddress = options.ilpAddress
     this.port = options.listener ? options.listener.port : 1080
     this.host = options.listener ? options.listener.host : 'localhost'
     this.baseAddress = options.listener ? options.listener.baseAddress : ''
@@ -132,6 +120,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
 
     //Quotes
     this.app.post(this.baseAddress + '/quotes', this._handleQuotePostRequest.bind(this))
+    this.app.put(this.baseAddress + '/quotes/:quoteId', this._handleQuotePutRequest.bind(this))
 
     this.server = this.app.listen(this.port, this.host)
 
@@ -222,7 +211,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       requestHeaders: {
         'content-type': 'application/vnd.interoperability.transfers+json;version=1',
         'fspiop-final-destination': request.headers['fspiop-final-destination'],
-        'fspiop-source': 'moja.superremit' // TODO: get address
+        'fspiop-source': this.ilpAddress
       }
     }
 
@@ -276,6 +265,30 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     } catch (err) {
       response.status(422).end(err.message)
     }
+  }
+
+  async _handleQuotePutRequest (request: express.Request, response: express.Response) {
+    const quoteId = request.params.quoteId
+    this._log.info(`received fulfill quote request. transferId=${quoteId}`)
+
+    const ilpMojaData = {
+      requestType: MessageType.quote,
+      uniqueId: quoteId,
+      requestBody: request.body,
+      requestHeaders: {
+        'content-type': 'application/vnd.interoperability.transfers+json;version=1',
+        'fspiop-final-destination': request.headers['fspiop-final-destination'],
+        'fspiop-source': this.ilpAddress
+      }
+    }
+
+    const ilpFulfill = {
+      fulfillment: Buffer.from(ilpMojaData.requestBody.fulfillment, 'base64'),
+      data: Buffer.from(JSON.stringify(ilpMojaData))
+    } as IlpFulfill
+
+    this.emit('__callback_' + quoteId, ilpFulfill)
+    response.status(202).end()
   }
 
   /**
@@ -373,15 +386,30 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     try {
       const packetData = JSON.parse(packet.data.toString())
       let transferRequest = packetData.requestBody
+      let headers = null
       switch(packetData.requestType) {
         case(MessageType.transfer):
-          transferRequest.payerFsp = 'moja.superremit' // TODO: need to know address of connector
+          transferRequest.payerFsp = this.ilpAddress
           transferRequest.payeeFsp = packet.destination
-          const headers = {
+          headers = {
             'fspiop-final-destination': packet.destination,
-            'fspiop-source': 'moja.superremit', // TODO: get address
+            'fspiop-source': this.ilpAddress,
             'accept': 'application/vnd.interoperability.transfers+json;version=1',
             'content-type': 'application/vnd.interoperability.transfers+json;version=1',
+            'date': (new Date()).toUTCString()
+          }
+
+          this._log.info('posting to endpoint:', this.endpoint, 'headers', headers,'transfer request:', transferRequest)
+          this.client.post(this.endpoint + '/transfers', transferRequest, { headers }).catch((err: any) => console.log(err))
+          break;
+        case(MessageType.quote):
+          transferRequest.payerFsp = this.ilpAddress,
+          transferRequest.payeeFsp = packet.destination
+          headers = {
+            'fspiop-final-destination': packet.destination,
+            'fspiop-source': this.ilpAddress,
+            'accept': 'application/vnd.interoperability.quotes+json;version=1',
+            'content-type': 'application/vnd.interoperability.quotes+json;version=1.0',
             'date': (new Date()).toUTCString()
           }
 

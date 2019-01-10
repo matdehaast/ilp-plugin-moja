@@ -16,6 +16,7 @@ describe('Server', function () {
   // @ts-ignore
   beforeEach(async function () {
     httpPlugin = new MojaHttpPlugin({
+      ilpAddress: 'moja.superremit',
       listener: {
         port: port,
         host: host,
@@ -242,7 +243,7 @@ describe('Server', function () {
 
     const quoteHeaders = {
       'accept': 'application/json',
-      'content-type': 'application/json',
+      'content-type': 'application/vnd.interoperability.quotes+json;version=1.0',
       'date': 'Wed, 19 Nov 2018 08:14:01 GMT',
       'fspiop-source': 'moja.za.blue.zar.green',
       'fspiop-destination': ' moja.tz.red.tzs.pink',
