@@ -169,7 +169,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       const { amount, expiration, condition, transferId } = request.body
 
       const ilpMojaData = {
-        requestType: MessageType,
+        requestType: MessageType.transfer,
         uniqueId: transferId,
         requestBody: request.body,
         requestHeaders: request.headers
@@ -221,7 +221,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       uniqueId: transferId,
       requestBody: request.body,
       requestHeaders: {
-        'content-type': 'application/vnd.interoperability.transfers+json;version=1',
+        'content-type': 'application/vnd.interoperability.transfers+json;version=1.0',
         'fspiop-final-destination': request.headers['fspiop-final-destination'],
         'fspiop-source': this.ilpAddress
       }
@@ -290,7 +290,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       uniqueId: quoteId,
       requestBody: request.body,
       requestHeaders: {
-        'content-type': 'application/vnd.interoperability.quotes+json;version=1',
+        'content-type': 'application/vnd.interoperability.quotes+json;version=1.0',
         'fspiop-final-destination': request.headers['fspiop-final-destination'],
         'fspiop-source': this.ilpAddress
       }
@@ -408,9 +408,9 @@ export default class MojaHttpPlugin extends EventEmitter2 {
           headers = {
             'fspiop-final-destination': packet.destination,
             'fspiop-source': this.ilpAddress,
-            'accept': 'application/vnd.interoperability.transfers+json;version=1',
-            'content-type': 'application/vnd.interoperability.transfers+json;version=1',
-            'date': (new Date()).toUTCString()
+            'accept': 'application/vnd.interoperability.transfers+json;version=1.0',
+            'content-type': 'application/vnd.interoperability.transfers+json;version=1.0',
+            'date': packetData.requestHeaders['date']
           }
 
           this._log.info('posting to endpoint:', this.endpoint, 'headers', headers,'transfer request:', transferRequest)
@@ -422,9 +422,9 @@ export default class MojaHttpPlugin extends EventEmitter2 {
           headers = {
             'fspiop-final-destination': packet.destination,
             'fspiop-source': this.ilpAddress,
-            'accept': 'application/vnd.interoperability.quotes+json;version=1',
+            'accept': 'application/vnd.interoperability.quotes+json;version=1.0',
             'content-type': 'application/vnd.interoperability.quotes+json;version=1.0',
-            'date': (new Date()).toUTCString()
+            'date': packetData.requestHeaders['date']
           }
 
           this._log.info('posting to endpoint:', this.quotesEndpoint, 'headers', headers,'transfer request:', transferRequest)
