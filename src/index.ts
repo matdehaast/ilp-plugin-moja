@@ -48,6 +48,10 @@ export interface IlpPluginHttpConstructorOptions {
   }
   server: {
     endpoint: string
+  },
+  endpoints: {
+    transfers: string,
+    quotes: string
   }
 }
 
@@ -78,6 +82,9 @@ export default class MojaHttpPlugin extends EventEmitter2 {
   private endpoint: string
   private client: any
 
+  private transfersEndpoint: string
+  private quotesEndpoint: string
+
   constructor (options: IlpPluginHttpConstructorOptions, modules?: IlpPluginHttpConstructorModules) {
     super()
 
@@ -94,6 +101,9 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     this.baseAddress = options.listener ? options.listener.baseAddress : ''
     this.endpoint = options.server.endpoint
     this.client = axios
+
+    this.transfersEndpoint = options.endpoints.transfers
+    this.quotesEndpoint = options.endpoints.quotes
   }
 
   async connect () {
@@ -185,9 +195,11 @@ export default class MojaHttpPlugin extends EventEmitter2 {
         const transferReply = JSON.parse(ilpReply.data.toString())
 
         this._log.info(`sending put request to ${this.endpoint} for transferId=${transferId}`)
-        this.client.put(this.endpoint + '/transfers/' + transferId, transferReply.requestBody, { headers: transferReply.requestHeaders })
+        const headers = Object.assign({}, transferReply.requestHeaders, { 'fspiop-final-destination': request.headers['fspiop-source'] })
+        this.client.put(this.endpoint + '/transfers/' + transferId, transferReply.requestBody, { headers })
       } catch (err) {
         // TODO: check mojaloop api spec to see which endpoint rejects go to
+        console.log('Error in post transfer request. transferId=' + transferId, + ' ', err)
         const packet = err
       }
 
@@ -238,10 +250,10 @@ export default class MojaHttpPlugin extends EventEmitter2 {
 
       const ilpPrepare = {
         amount: amount.amount,
-        expiresAt: new Date(expiration),
+        expiresAt: new Date('2019-02-28'),
         destination: request.headers['fspiop-final-destination'] ? request.headers['fspiop-final-destination'] : request.headers['fspiop-destination'],
         data: Buffer.from(JSON.stringify(ilpMojaData)),
-        executionCondition: Buffer.from('0', 'base64')
+        executionCondition: Buffer.alloc(32)
       } as IlpPrepare
       response.status(202).end()
 
@@ -255,11 +267,13 @@ export default class MojaHttpPlugin extends EventEmitter2 {
         const ilpReply = deserializeIlpReply(packet)
         const transferReply = JSON.parse(ilpReply.data.toString())
 
-        this._log.info(`sending put request to ${this.endpoint} for transferId=${quoteId}`)
-        this.client.put(this.endpoint + '/quotes/' + quoteId, transferReply.requestBody, { headers: transferReply.requestHeaders })
+        this._log.info(`sending put request to ${this.quotesEndpoint} for transferId=${quoteId}`)
+        const headers = Object.assign({}, transferReply.requestHeaders, { 'fspiop-final-destination': request.headers['fspiop-source'] })
+        this.client.put(this.quotesEndpoint + '/quotes/' + quoteId, transferReply.requestBody, { headers })
       } catch (err) {
         // TODO: check mojaloop api spec to see which endpoint rejects go to
         const packet = err
+        console.log('ERROR:', err)
       }
 
     } catch (err) {
@@ -269,7 +283,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
 
   async _handleQuotePutRequest (request: express.Request, response: express.Response) {
     const quoteId = request.params.quoteId
-    this._log.info(`received fulfill quote request. transferId=${quoteId}`)
+    this._log.info(`received fulfill quote request. quoteId=${quoteId}`)
 
     const ilpMojaData = {
       requestType: MessageType.quote,
@@ -283,7 +297,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     }
 
     const ilpFulfill = {
-      fulfillment: Buffer.from('0', 'base64'),
+      fulfillment: Buffer.alloc(32),
       data: Buffer.from(JSON.stringify(ilpMojaData))
     } as IlpFulfill
 
@@ -380,7 +394,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
    */
   protected async _postIlpPrepare (packet: IlpPrepare, requestId?: string) {
 
-    this._log.trace(`posting transfer prepare request to ${this.endpoint}. requestId=${requestId} packet=${JSON.stringify(packet)}`)
+    this._log.trace(`posting prepare request to ${this.endpoint}. requestId=${requestId} packet=${JSON.stringify(packet)}`)
 
     //TODO needs to handle various request types
     try {
@@ -401,9 +415,9 @@ export default class MojaHttpPlugin extends EventEmitter2 {
 
           this._log.info('posting to endpoint:', this.endpoint, 'headers', headers,'transfer request:', transferRequest)
           this.client.post(this.endpoint + '/transfers', transferRequest, { headers }).catch((err: any) => console.log(err))
-          break;
+          break
         case(MessageType.quote):
-          transferRequest.payerFsp = this.ilpAddress,
+          transferRequest.payerFsp = this.ilpAddress
           transferRequest.payeeFsp = packet.destination
           headers = {
             'fspiop-final-destination': packet.destination,
@@ -413,9 +427,9 @@ export default class MojaHttpPlugin extends EventEmitter2 {
             'date': (new Date()).toUTCString()
           }
 
-          this._log.info('posting to endpoint:', this.endpoint, 'headers', headers,'transfer request:', transferRequest)
-          this.client.post(this.endpoint + '/transfers', transferRequest, { headers }).catch((err: any) => console.log(err))
-          break;
+          this._log.info('posting to endpoint:', this.quotesEndpoint, 'headers', headers,'transfer request:', transferRequest)
+          this.client.post(this.quotesEndpoint + '/quotes', transferRequest, { headers }).catch((err: any) => console.log(err))
+          break
         default:
           this._log.error('Unable to forward request for type ', packetData.requestType)
       }
