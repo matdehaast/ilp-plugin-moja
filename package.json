@@ -2,7 +2,7 @@
   "name": "ilp-plugin-moja",
   "version": "1.0.0",
   "description": "Mojaloop HTTP Plugin ILP",
-  "main": "build/index.js",
+  "main": "index.js",
   "types": "build/index.d.ts",
   "files": [
     "build/**/*"
