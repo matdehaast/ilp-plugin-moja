@@ -127,6 +127,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     //Transfers
     this.app.post(this.baseAddress + '/transfers', this._handleTransferPostRequest.bind(this))
     this.app.put(this.baseAddress + '/transfers/:transferId', this._handleTransferPutRequest.bind(this))
+    this.app.put(this.baseAddress + '/transfers/:transferId/error', this._handleTransferErrorRequest.bind(this))
 
     //Quotes
     this.app.post(this.baseAddress + '/quotes', this._handleQuotePostRequest.bind(this))
@@ -157,6 +158,12 @@ export default class MojaHttpPlugin extends EventEmitter2 {
 
   isConnected () {
     return this._readyState === ReadyState.CONNECTED
+  }
+
+  async _handleTransferErrorRequest (request: express.Request, response: express.Response) {
+    console.log("received transfer error. transferId=", request.params.transfer_id)
+    console.log("headers", request.headers)
+    console.log("body", request.body)
   }
 
   /**
@@ -223,12 +230,13 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       requestHeaders: {
         'content-type': 'application/vnd.interoperability.transfers+json;version=1.0',
         'fspiop-final-destination': request.headers['fspiop-final-destination'],
-        'fspiop-source': this.ilpAddress
+        'fspiop-source': this.ilpAddress,
+        'date': request.headers['date']
       }
     }
 
     const ilpFulfill = {
-      fulfillment: Buffer.from(ilpMojaData.requestBody.fulfillment, 'base64'),
+      fulfillment: Buffer.from(ilpMojaData.requestBody.fulfilment, 'base64'),
       data: Buffer.from(JSON.stringify(ilpMojaData))
     } as IlpFulfill
 
@@ -401,7 +409,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       const packetData = JSON.parse(packet.data.toString())
       let transferRequest = packetData.requestBody
       let headers = null
-      switch(packetData.requestType) {
+      switch (packetData.requestType) {
         case(MessageType.transfer):
           transferRequest.payerFsp = this.ilpAddress
           transferRequest.payeeFsp = packet.destination
