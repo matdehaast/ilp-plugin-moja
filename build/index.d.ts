@@ -48,6 +48,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     connect(): Promise<void>;
     disconnect(): Promise<void>;
     isConnected(): boolean;
+    _handleTransferErrorRequest(request: express.Request, response: express.Response): Promise<void>;
     private _handleTransferPostRequest;
     private _handleTransferPutRequest;
     private _handleTransferErrorPutRequest;
