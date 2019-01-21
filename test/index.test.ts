@@ -24,6 +24,10 @@ describe('Server', function () {
       },
       server: {
         endpoint: ''
+      },
+      endpoints: {
+        transfers: '',
+        quotes: ''
       }
     },{})
     await httpPlugin.connect()
@@ -91,7 +95,8 @@ describe('Server', function () {
             assert.equal(new Date(transferRequest.expiration), preparePacket.expiresAt)
             assert.equal(headers['fspiop-final-destination'], preparePacket.destination)
           } catch (err) {
-            assert.fail('The ilpPrepare packet was not constructed properly')
+            throw new Error(err)
+            // assert.fail('The ilpPrepare packet was not constructed properly')
           }
 
           return new Promise(resolve => resolve(data))
