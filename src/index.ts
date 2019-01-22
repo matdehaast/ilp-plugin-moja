@@ -240,7 +240,7 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     }
 
     const ilpFulfill = {
-      fulfillment: Buffer.from(requestBody.fulfillment, 'base64'),
+      fulfillment: Buffer.from(requestBody.fulfilment, 'base64'),
       data: Buffer.from(JSON.stringify(ilpMojaData))
     } as IlpFulfill
 
