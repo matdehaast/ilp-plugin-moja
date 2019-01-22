@@ -125,7 +125,7 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
             uniqueId: transferId,
             requestBody,
             requestHeaders: {
-                'content-type': 'application/vnd.interoperability.transfers+json;version=1',
+                'content-type': 'application/vnd.interoperability.transfers+json;version=1.0',
                 'fspiop-final-destination': request.headers['fspiop-final-destination'],
                 'fspiop-source': this.ilpAddress,
                 'date': request.headers['date']
