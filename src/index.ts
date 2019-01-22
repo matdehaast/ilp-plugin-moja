@@ -235,7 +235,8 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       requestHeaders: {
         'content-type': 'application/vnd.interoperability.transfers+json;version=1',
         'fspiop-final-destination': request.headers['fspiop-final-destination'],
-        'fspiop-source': this.ilpAddress
+        'fspiop-source': this.ilpAddress,
+        'date': request.headers['date']
       }
     }
 
