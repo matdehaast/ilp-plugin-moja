@@ -165,6 +165,12 @@ export default class MojaHttpPlugin extends EventEmitter2 {
     return this._readyState === ReadyState.CONNECTED
   }
 
+  async _handleTransferErrorRequest (request: express.Request, response: express.Response) {
+    console.log("received transfer error. transferId=", request.params.transfer_id)
+    console.log("headers", request.headers)
+    console.log("body", request.body)
+  }
+
   /**
    * Convert incoming http request into ilpPacket then forward onto connector.
    * Return a 202 to sender if packet was successfully forwarded, 422 if not.
@@ -244,14 +250,15 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       uniqueId: transferId,
       requestBody,
       requestHeaders: {
-        'content-type': 'application/vnd.interoperability.transfers+json;version=1',
+        'content-type': 'application/vnd.interoperability.transfers+json;version=1.0',
         'fspiop-final-destination': request.headers['fspiop-final-destination'],
-        'fspiop-source': this.ilpAddress
+        'fspiop-source': this.ilpAddress,
+        'date': request.headers['date']
       }
     }
 
     const ilpFulfill = {
-      fulfillment: Buffer.from(requestBody.fulfillment, 'base64'),
+      fulfillment: Buffer.from(requestBody.fulfilment, 'base64'),
       data: Buffer.from(JSON.stringify(ilpMojaData))
     } as IlpFulfill
 
@@ -292,12 +299,13 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       requestHeaders: {
         'content-type': 'application/vnd.interoperability.transfers+json;version=1.0',
         'fspiop-final-destination': request.headers['fspiop-final-destination'],
-        'fspiop-source': this.ilpAddress
+        'fspiop-source': this.ilpAddress,
+        'date': request.headers['date']
       }
     }
 
     const ilpFulfill = {
-      fulfillment: Buffer.from(ilpMojaData.requestBody.fulfillment, 'base64'),
+      fulfillment: Buffer.from(ilpMojaData.requestBody.fulfilment, 'base64'),
       data: Buffer.from(JSON.stringify(ilpMojaData))
     } as IlpFulfill
 
@@ -378,7 +386,8 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       requestHeaders: {
         'content-type': 'application/vnd.interoperability.quotes+json;version=1.0',
         'fspiop-final-destination': request.headers['fspiop-final-destination'],
-        'fspiop-source': this.ilpAddress
+        'fspiop-source': this.ilpAddress,
+        'date': (new Date()).toUTCString()
       }
     }
 

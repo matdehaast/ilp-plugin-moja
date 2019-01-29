@@ -72,6 +72,11 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
     isConnected() {
         return this._readyState === ReadyState.CONNECTED;
     }
+    async _handleTransferErrorRequest(request, response) {
+        console.log("received transfer error. transferId=", request.params.transfer_id);
+        console.log("headers", request.headers);
+        console.log("body", request.body);
+    }
     async _handleTransferPostRequest(request, response) {
         try {
             this._log.info(`received request transfer. headers=${JSON.stringify(request.headers)}, body=${JSON.stringify(request.body)},  amount=${request.body.amount}`);
@@ -134,13 +139,14 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
             uniqueId: transferId,
             requestBody,
             requestHeaders: {
-                'content-type': 'application/vnd.interoperability.transfers+json;version=1',
+                'content-type': 'application/vnd.interoperability.transfers+json;version=1.0',
                 'fspiop-final-destination': request.headers['fspiop-final-destination'],
-                'fspiop-source': this.ilpAddress
+                'fspiop-source': this.ilpAddress,
+                'date': request.headers['date']
             }
         };
         const ilpFulfill = {
-            fulfillment: Buffer.from(requestBody.fulfillment, 'base64'),
+            fulfillment: Buffer.from(requestBody.fulfilment, 'base64'),
             data: Buffer.from(JSON.stringify(ilpMojaData))
         };
         this.emit('__callback_' + transferId, ilpFulfill);
@@ -170,11 +176,12 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
             requestHeaders: {
                 'content-type': 'application/vnd.interoperability.transfers+json;version=1.0',
                 'fspiop-final-destination': request.headers['fspiop-final-destination'],
-                'fspiop-source': this.ilpAddress
+                'fspiop-source': this.ilpAddress,
+                'date': request.headers['date']
             }
         };
         const ilpFulfill = {
-            fulfillment: Buffer.from(ilpMojaData.requestBody.fulfillment, 'base64'),
+            fulfillment: Buffer.from(ilpMojaData.requestBody.fulfilment, 'base64'),
             data: Buffer.from(JSON.stringify(ilpMojaData))
         };
         this.emit('__callback_' + transferId, ilpFulfill);
@@ -243,7 +250,8 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
             requestHeaders: {
                 'content-type': 'application/vnd.interoperability.quotes+json;version=1.0',
                 'fspiop-final-destination': request.headers['fspiop-final-destination'],
-                'fspiop-source': this.ilpAddress
+                'fspiop-source': this.ilpAddress,
+                'date': (new Date()).toUTCString()
             }
         };
         const ilpFulfill = {
