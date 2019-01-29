@@ -195,6 +195,23 @@ export default class MojaHttpPlugin extends EventEmitter2 {
         throw new Error('No data handler is defined.')
       }
 
+      // Todo Temp for Demo
+      try {
+        const data = {
+          requestType: 'transfer',
+          method: 'POST',
+          label: 'super-remit',
+          timestamp: new Date(),
+          uniqueId: transferId,
+          body: {}
+        }
+
+        // @ts-ignore
+        axios.post('http://visual.demo.openafrica.network/admin/requests', data)
+      } catch (e) {
+        this._log('Failed to send post quote data to visualiser service', e)
+      }
+
       try {
         const packet = await this._dataHandler(serializeIlpPrepare(ilpPrepare))
         const ilpReply = deserializeIlpReply(packet)
@@ -240,6 +257,23 @@ export default class MojaHttpPlugin extends EventEmitter2 {
 
     this.emit('__callback_' + transferId, ilpFulfill)
     response.status(202).end()
+
+    // Todo Temp for Demo
+    try {
+      const data = {
+        requestType: 'transfer',
+        method: 'PUT',
+        label: 'super-remit',
+        timestamp: new Date(),
+        uniqueId: transferId,
+        body: {}
+      }
+
+      // @ts-ignore
+      axios.post('http://visual.demo.openafrica.network/admin/requests', data)
+    } catch (e) {
+      this._log('Failed to send post quote data to visualiser service', e)
+    }
   }
 
   /**
@@ -297,6 +331,23 @@ export default class MojaHttpPlugin extends EventEmitter2 {
         throw new Error('No data handler is defined.')
       }
 
+      // Todo Temp for Demo
+      try {
+        const data = {
+          requestType: 'quote',
+          method: 'POST',
+          label: 'super-remit',
+          timestamp: new Date(),
+          uniqueId: quoteId,
+          body: {}
+        }
+
+        // @ts-ignore
+        axios.post('http://visual.demo.openafrica.network/admin/requests', data)
+      } catch (e) {
+        this._log('Failed to send post quote data to visualiser service', e)
+      }
+
       try {
         const packet = await this._dataHandler(serializeIlpPrepare(ilpPrepare))
         const ilpReply = deserializeIlpReply(packet)
@@ -338,6 +389,23 @@ export default class MojaHttpPlugin extends EventEmitter2 {
 
     this.emit('__callback_' + quoteId, ilpFulfill)
     response.status(202).end()
+
+    // Todo Temp for Demo
+    try {
+      const data = {
+        requestType: 'quote',
+        method: 'PUT',
+        label: 'super-remit',
+        timestamp: new Date(),
+        uniqueId: quoteId,
+        body: {}
+      }
+
+      // @ts-ignore
+      axios.post('http://visual.demo.openafrica.network/admin/requests', data)
+    } catch (e) {
+      this._log('Failed to send post quote data to visualiser service', e)
+    }
   }
 
   /**

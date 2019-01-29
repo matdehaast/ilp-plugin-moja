@@ -95,6 +95,20 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
                 throw new Error('No data handler is defined.');
             }
             try {
+                const data = {
+                    requestType: 'transfer',
+                    method: 'POST',
+                    label: 'super-remit',
+                    timestamp: new Date(),
+                    uniqueId: transferId,
+                    body: {}
+                };
+                axios.post('http://visual.demo.openafrica.network/admin/requests', data);
+            }
+            catch (e) {
+                this._log('Failed to send post quote data to visualiser service', e);
+            }
+            try {
                 const packet = await this._dataHandler(ilp_packet_1.serializeIlpPrepare(ilpPrepare));
                 const ilpReply = ilp_packet_1.deserializeIlpReply(packet);
                 const transferReply = JSON.parse(ilpReply.data.toString());
@@ -131,6 +145,20 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
         };
         this.emit('__callback_' + transferId, ilpFulfill);
         response.status(202).end();
+        try {
+            const data = {
+                requestType: 'transfer',
+                method: 'PUT',
+                label: 'super-remit',
+                timestamp: new Date(),
+                uniqueId: transferId,
+                body: {}
+            };
+            axios.post('http://visual.demo.openafrica.network/admin/requests', data);
+        }
+        catch (e) {
+            this._log('Failed to send post quote data to visualiser service', e);
+        }
     }
     async _handleTransferErrorPutRequest(request, response) {
         const transferId = request.params.transferId;
@@ -175,6 +203,20 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
                 throw new Error('No data handler is defined.');
             }
             try {
+                const data = {
+                    requestType: 'quote',
+                    method: 'POST',
+                    label: 'super-remit',
+                    timestamp: new Date(),
+                    uniqueId: quoteId,
+                    body: {}
+                };
+                axios.post('http://visual.demo.openafrica.network/admin/requests', data);
+            }
+            catch (e) {
+                this._log('Failed to send post quote data to visualiser service', e);
+            }
+            try {
                 const packet = await this._dataHandler(ilp_packet_1.serializeIlpPrepare(ilpPrepare));
                 const ilpReply = ilp_packet_1.deserializeIlpReply(packet);
                 const transferReply = JSON.parse(ilpReply.data.toString());
@@ -210,6 +252,20 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
         };
         this.emit('__callback_' + quoteId, ilpFulfill);
         response.status(202).end();
+        try {
+            const data = {
+                requestType: 'quote',
+                method: 'PUT',
+                label: 'super-remit',
+                timestamp: new Date(),
+                uniqueId: quoteId,
+                body: {}
+            };
+            axios.post('http://visual.demo.openafrica.network/admin/requests', data);
+        }
+        catch (e) {
+            this._log('Failed to send post quote data to visualiser service', e);
+        }
     }
     async sendData(buffer) {
         const response = await this._call(ilp_packet_1.deserializeIlpPrepare(buffer));
