@@ -166,9 +166,9 @@ export default class MojaHttpPlugin extends EventEmitter2 {
   }
 
   async _handleTransferErrorRequest (request: express.Request, response: express.Response) {
-    console.log("received transfer error. transferId=", request.params.transfer_id)
-    console.log("headers", request.headers)
-    console.log("body", request.body)
+    console.log('received transfer error. transferId=', request.params.transfer_id)
+    console.log('headers', request.headers)
+    console.log('body', request.body)
   }
 
   /**
@@ -212,10 +212,9 @@ export default class MojaHttpPlugin extends EventEmitter2 {
           body: {}
         }
 
-        // @ts-ignore
-        axios.post('http://visual.demo.openafrica.network/admin/requests', data)
+        this.client.post('http://visual.demo.openafrica.network/admin/requests', data)
       } catch (e) {
-        this._log('Failed to send post quote data to visualiser service', e)
+        this._log.log('Failed to send post quote data to visualiser service', e)
       }
 
       try {
@@ -276,10 +275,9 @@ export default class MojaHttpPlugin extends EventEmitter2 {
         body: {}
       }
 
-      // @ts-ignore
-      axios.post('http://visual.demo.openafrica.network/admin/requests', data)
+      this.client.post('http://visual.demo.openafrica.network/admin/requests', data)
     } catch (e) {
-      this._log('Failed to send post quote data to visualiser service', e)
+      this._log.log('Failed to send post quote data to visualiser service', e)
     }
   }
 
@@ -351,9 +349,9 @@ export default class MojaHttpPlugin extends EventEmitter2 {
         }
 
         // @ts-ignore
-        axios.post('http://visual.demo.openafrica.network/admin/requests', data)
+        this.client.post('http://visual.demo.openafrica.network/admin/requests', data)
       } catch (e) {
-        this._log('Failed to send post quote data to visualiser service', e)
+        this._log.log('Failed to send post quote data to visualiser service', e)
       }
 
       try {
@@ -411,9 +409,9 @@ export default class MojaHttpPlugin extends EventEmitter2 {
       }
 
       // @ts-ignore
-      axios.post('http://visual.demo.openafrica.network/admin/requests', data)
+      this.client.post('http://visual.demo.openafrica.network/admin/requests', data)
     } catch (e) {
-      this._log('Failed to send post quote data to visualiser service', e)
+      this._log.log('Failed to send post quote data to visualiser service', e)
     }
   }
 

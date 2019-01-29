@@ -73,9 +73,9 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
         return this._readyState === ReadyState.CONNECTED;
     }
     async _handleTransferErrorRequest(request, response) {
-        console.log("received transfer error. transferId=", request.params.transfer_id);
-        console.log("headers", request.headers);
-        console.log("body", request.body);
+        console.log('received transfer error. transferId=', request.params.transfer_id);
+        console.log('headers', request.headers);
+        console.log('body', request.body);
     }
     async _handleTransferPostRequest(request, response) {
         try {
@@ -108,10 +108,10 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
                     uniqueId: transferId,
                     body: {}
                 };
-                axios.post('http://visual.demo.openafrica.network/admin/requests', data);
+                this.client.post('http://visual.demo.openafrica.network/admin/requests', data);
             }
             catch (e) {
-                this._log('Failed to send post quote data to visualiser service', e);
+                this._log.log('Failed to send post quote data to visualiser service', e);
             }
             try {
                 const packet = await this._dataHandler(ilp_packet_1.serializeIlpPrepare(ilpPrepare));
@@ -160,10 +160,10 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
                 uniqueId: transferId,
                 body: {}
             };
-            axios.post('http://visual.demo.openafrica.network/admin/requests', data);
+            this.client.post('http://visual.demo.openafrica.network/admin/requests', data);
         }
         catch (e) {
-            this._log('Failed to send post quote data to visualiser service', e);
+            this._log.log('Failed to send post quote data to visualiser service', e);
         }
     }
     async _handleTransferErrorPutRequest(request, response) {
@@ -218,10 +218,10 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
                     uniqueId: quoteId,
                     body: {}
                 };
-                axios.post('http://visual.demo.openafrica.network/admin/requests', data);
+                this.client.post('http://visual.demo.openafrica.network/admin/requests', data);
             }
             catch (e) {
-                this._log('Failed to send post quote data to visualiser service', e);
+                this._log.log('Failed to send post quote data to visualiser service', e);
             }
             try {
                 const packet = await this._dataHandler(ilp_packet_1.serializeIlpPrepare(ilpPrepare));
@@ -269,10 +269,10 @@ class MojaHttpPlugin extends eventemitter2_1.EventEmitter2 {
                 uniqueId: quoteId,
                 body: {}
             };
-            axios.post('http://visual.demo.openafrica.network/admin/requests', data);
+            this.client.post('http://visual.demo.openafrica.network/admin/requests', data);
         }
         catch (e) {
-            this._log('Failed to send post quote data to visualiser service', e);
+            this._log.log('Failed to send post quote data to visualiser service', e);
         }
     }
     async sendData(buffer) {
